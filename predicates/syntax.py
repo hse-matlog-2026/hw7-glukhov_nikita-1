@@ -114,6 +114,9 @@ class Term:
             The standard string representation of the current term.
         """
         # Task 7.1
+        if hasattr(self, "arguments") is False:
+            return self.root
+        return self.root + '(' + ','.join(map(str, self.arguments)) + ')'
 
     def __eq__(self, other: object) -> bool:
         """Compares the current term with the given one.
@@ -157,6 +160,42 @@ class Term:
             that entire name (and not just a part of it, such as ``'x1'``).
         """
         # Task 7.3a
+        if string[0] == '_':
+            return Term("_"), string[1:]
+        root, rest = None, None
+        if is_variable(string[0]) or is_constant(string[0]):
+            i = 1
+            while i < len(string) and string[i].isalnum():
+                i += 1
+            return Term(string[:i]), string[i:]
+        
+        if is_function(string[0]):
+            i = 1
+            while i < len(string) and string[i] != "(":
+                i += 1
+            root, rest = string[:i], string[i:]
+            if len(rest) > 0:
+                if rest[0] == '(':
+                    rest = rest[1:]
+                    args = []
+
+                    if rest[0] == ')':
+                        return Term(root, tuple(args)), rest[1:]
+
+                    while True:
+                        arg, rest = Term._parse_prefix(rest)
+                        args.append(arg)
+
+                        if len(rest) < 1:
+                            raise ValueError("Missing closing parenthesis in term")
+
+                        if rest[0] == ')':
+                            return Term(root, tuple(args)), rest[1:]
+
+                        if rest[0] == ',':
+                            rest = rest[1:]
+            return Term(root), rest
+
 
     @staticmethod
     def parse(string: str) -> Term:
@@ -169,6 +208,10 @@ class Term:
             A term whose standard string representation is the given string.
         """
         # Task 7.3b
+        term, rest = Term._parse_prefix(string)
+        if rest != '':
+            raise ValueError("Unparsed suffix after parsing term: " + rest)
+        return term
 
     def constants(self) -> Set[str]:
         """Finds all constant names in the current term.
@@ -177,6 +220,14 @@ class Term:
             A set of all constant names used in the current term.
         """
         # Task 7.5a
+        if is_constant(self.root):
+            return {self.root}
+        if is_variable(self.root):
+            return set()
+        result = set()
+        for arg in self.arguments:
+            result = result.union(arg.constants())
+        return result
 
     def variables(self) -> Set[str]:
         """Finds all variable names in the current term.
@@ -185,6 +236,14 @@ class Term:
             A set of all variable names used in the current term.
         """
         # Task 7.5b
+        if is_constant(self.root):
+            return set()
+        if is_variable(self.root):
+            return {self.root}
+        result = set()
+        for arg in self.arguments:
+            result = result.union(arg.variables())
+        return result
 
     def functions(self) -> Set[Tuple[str, int]]:
         """Finds all function names in the current term, along with their
@@ -195,6 +254,16 @@ class Term:
             all function names used in the current term.
         """
         # Task 7.5c
+        if is_constant(self.root):
+            return set()
+        if is_variable(self.root):
+            return set()
+        result = set()
+        if is_function(self.root):
+            result.add((self.root, len(self.arguments)))
+        for arg in self.arguments:
+            result = result.union(arg.functions())
+        return result
 
     def substitute(self, substitution_map: Mapping[str, Term],
                    forbidden_variables: AbstractSet[str] = frozenset()) -> Term:
@@ -381,6 +450,17 @@ class Formula:
             The standard string representation of the current formula.
         """
         # Task 7.2
+        if hasattr(self, "arguments") is True:
+            if self.root == '=':
+                return str(self.arguments[0]) + self.root + str(self.arguments[1])
+            else:
+                return self.root + '(' + ','.join(map(str, self.arguments)) + ')'
+        if hasattr(self, "first") is True and hasattr(self, "second") is False:
+            return self.root + str(self.first)
+        if hasattr(self, "first") is True and hasattr(self, "second") is True:
+            return '(' + str(self.first) + self.root + str(self.second) + ')'
+        if hasattr(self, "variable") is True and hasattr(self, "statement") is True:
+            return self.root + str(self.variable) + '[' + str(self.statement) + ']'
 
     def __eq__(self, other: object) -> bool:
         """Compares the current formula with the given one.
@@ -425,6 +505,69 @@ class Formula:
             that entire name (and not just a part of it, such as ``'f(y)=x1'``).
         """
         # Task 7.4a
+        i = 0
+        first_arg = ""
+        if is_unary(string[0]):
+            first, rest = Formula._parse_prefix(string[1:])
+            return Formula(string[0], first), rest
+
+        if is_quantifier(string[0]):
+            variable = string[1]
+            assert is_variable(variable)
+            i = 2
+            while i < len(string) and string[i] != '[':
+                i += 1
+            variable = string[1:i]
+            assert string[i] == '['
+            statement, rest = Formula._parse_prefix(string[i+1:])
+            assert rest[0] == ']'
+            return Formula(string[0], variable, statement), rest[1:]
+
+        if string[0] == '(':
+            first, rest = Formula._parse_prefix(string[1:])
+            if rest[0:2] == '->':
+                op = '->'
+                rest = rest[2:]
+            else:
+                op = rest[0]
+                rest = rest[1:]
+
+            second, rest = Formula._parse_prefix(rest)
+
+            assert rest[0] == ')'
+            return Formula(op, first, second), rest[1:]
+
+        if is_relation(string[0]):
+            i = 0
+            while i < len(string) and string[i].isalnum():
+                i += 1
+            name = string[:i]
+
+            rest = string[i:]
+            assert rest[0] == '('
+            rest = rest[1:]
+
+            args = []
+            if rest.startswith(')'):
+                return Formula(name, tuple(args)), rest[1:]
+
+            while True:
+                arg, rest = Term._parse_prefix(rest)
+                args.append(arg)
+
+                if rest.startswith(','):
+                    rest = rest[1:]
+                elif rest.startswith(')'):
+                    return Formula(name, tuple(args)), rest[1:]
+                else:
+                    raise ValueError("Bad relation syntax")
+        term1, rest = Term._parse_prefix(string)
+
+        if rest[0] == '=':
+            term2, rest = Term._parse_prefix(rest[1:])
+            return Formula('=', [term1, term2]), rest
+
+        raise ValueError(f"Invalid formula: {string}")
 
     @staticmethod
     def parse(string: str) -> Formula:
@@ -437,6 +580,10 @@ class Formula:
             A formula whose standard string representation is the given string.
         """
         # Task 7.4b
+        formula, rest = Formula._parse_prefix(string)
+        if rest != '':
+            raise ValueError("Unparsed suffix after parsing formula: " + rest)
+        return formula
 
     def constants(self) -> Set[str]:
         """Finds all constant names in the current formula.
@@ -445,6 +592,18 @@ class Formula:
             A set of all constant names used in the current formula.
         """
         # Task 7.6a
+        if hasattr(self, "arguments") is True:
+            result = set()
+            for arg in self.arguments:
+                result = result.union(arg.constants())
+            return result
+        if hasattr(self, "first") is True and hasattr(self, "second") is False:
+            return self.first.constants()
+        if hasattr(self, "first") is True and hasattr(self, "second") is True:
+            return self.first.constants().union(self.second.constants())
+        if hasattr(self, "variable") is True and hasattr(self, "statement") is True:
+            return self.statement.constants()
+        return set()
 
     def variables(self) -> Set[str]:
         """Finds all variable names in the current formula.
@@ -453,6 +612,18 @@ class Formula:
             A set of all variable names used in the current formula.
         """
         # Task 7.6b
+        if hasattr(self, "arguments") is True:
+            result = set()
+            for arg in self.arguments:
+                result = result.union(arg.variables())
+            return result
+        if hasattr(self, "first") is True and hasattr(self, "second") is False:
+            return self.first.variables()
+        if hasattr(self, "first") is True and hasattr(self, "second") is True:
+            return self.first.variables().union(self.second.variables())
+        if hasattr(self, "variable") is True and hasattr(self, "statement") is True:
+            return self.statement.variables().union({self.variable})
+        return set()
 
     def free_variables(self) -> Set[str]:
         """Finds all variable names that are free in the current formula.
@@ -462,6 +633,19 @@ class Formula:
             only within a scope of a quantification on that variable name.
         """
         # Task 7.6c
+        if hasattr(self, "arguments") is True:
+            result = set()
+            for arg in self.arguments:
+                result = result.union(arg.variables())
+            return result
+        if hasattr(self, "first") is True and hasattr(self, "second") is False:
+            return self.first.free_variables()
+        if hasattr(self, "first") is True and hasattr(self, "second") is True:
+            return self.first.free_variables().union(self.second.free_variables())
+        if hasattr(self, "variable") is True and hasattr(self, "statement") is True:
+            return self.statement.free_variables().difference({self.variable})
+        return set()
+    
 
     def functions(self) -> Set[Tuple[str, int]]:
         """Finds all function names in the current formula, along with their
@@ -472,6 +656,18 @@ class Formula:
             all function names used in the current formula.
         """
         # Task 7.6d
+        if hasattr(self, "arguments") is True:
+            result = set()
+            for arg in self.arguments:
+                result = result.union(arg.functions())
+            return result
+        if hasattr(self, "first") is True and hasattr(self, "second") is False:
+            return self.first.functions()
+        if hasattr(self, "first") is True and hasattr(self, "second") is True:
+            return self.first.functions().union(self.second.functions())
+        if hasattr(self, "variable") is True and hasattr(self, "statement") is True:
+            return self.statement.functions()
+        return set()
 
     def relations(self) -> Set[Tuple[str, int]]:
         """Finds all relation names in the current formula, along with their
@@ -482,6 +678,18 @@ class Formula:
             all relation names used in the current formula.
         """
         # Task 7.6e
+        if hasattr(self, "arguments") is True:
+            if is_relation(self.root):
+                return {(self.root, len(self.arguments))}
+            else:
+                return set()
+        if hasattr(self, "first") is True and hasattr(self, "second") is False:
+            return self.first.relations()
+        if hasattr(self, "first") is True and hasattr(self, "second") is True:
+            return self.first.relations().union(self.second.relations())
+        if hasattr(self, "variable") is True and hasattr(self, "statement") is True:
+            return self.statement.relations()
+        return set()
 
     def substitute(self, substitution_map: Mapping[str, Term],
                    forbidden_variables: AbstractSet[str] = frozenset()) -> \
